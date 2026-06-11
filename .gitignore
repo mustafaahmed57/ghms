@@ -1,0 +1,9 @@
+# clasp credentials — never commit these
+.clasp.json
+
+# Claude session data
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store
