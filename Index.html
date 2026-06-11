@@ -3736,6 +3736,11 @@
     // =========================================================
     var _PG_SIZE = 20;
 
+    function _debounce(fn, ms) {
+      var t;
+      return function() { var a = arguments, c = this; clearTimeout(t); t = setTimeout(function() { fn.apply(c, a); }, ms || 250); };
+    }
+
     function _pgHtml(total, page, ps, cbStr) {
       if (!total) return '';
       var tp = Math.ceil(total / ps);
@@ -4191,24 +4196,48 @@
     // Replace the Promise bodies with real google.script.run calls.
     // =========================================================
     var GAS = {
-      /*
-       * Usage:
-       *   GAS.run('getFunctionName', arg1, arg2)
-       *     .then(function(result) { ... })
-       *     .catch(function(err)   { Toast.error(err.message || err); });
-       */
+      _fc: {}, // frontend response cache
+      _ft: {   // per-function TTL (ms); 0 = no cache
+        listRooms          : 30000,
+        listGuests         : 30000,
+        listBookings       : 30000,
+        listPayments       : 30000,
+        listInventoryItems : 30000,
+        getHotelSettings   : 120000,
+      },
+
       run: function(fnName) {
         var args = Array.prototype.slice.call(arguments, 1);
+        var ttl  = GAS._ft[fnName];
+        if (ttl) {
+          var k = fnName + (args.length ? JSON.stringify(args) : '');
+          var e = GAS._fc[k];
+          if (e && (Date.now() - e.t) < ttl) return Promise.resolve(e.d);
+        }
+        var t0 = Date.now();
         return new Promise(function(resolve, reject) {
           try {
             var runner = google.script.run
-              .withSuccessHandler(resolve)
+              .withSuccessHandler(function(r) {
+                console.log('[GAS] ' + fnName + ' ' + (Date.now() - t0) + 'ms');
+                if (ttl) {
+                  var k2 = fnName + (args.length ? JSON.stringify(args) : '');
+                  GAS._fc[k2] = { d: r, t: Date.now() };
+                }
+                resolve(r);
+              })
               .withFailureHandler(reject);
             runner[fnName].apply(runner, args);
           } catch(e) {
-            // Fallback when not running inside GAS (local preview)
             reject(new Error('google.script.run unavailable: ' + fnName));
           }
+        });
+      },
+
+      invalidate: function() {
+        var fns = Array.prototype.slice.call(arguments);
+        Object.keys(GAS._fc).forEach(function(k) {
+          fns.forEach(function(fn) { if (k.indexOf(fn) === 0) delete GAS._fc[k]; });
         });
       }
     };
@@ -4706,7 +4735,16 @@
             Spinner.hide();
             if (!res.success) { Toast.error(res.message, 'Error'); return; }
             Toast.success(res.message, isEdit ? 'Room Updated' : 'Room Added');
-            self.load();
+            GAS.invalidate('listRooms', 'getDashboardData');
+            if (isEdit) {
+              for (var i = 0; i < self._cache.length; i++) {
+                if (self._cache[i].roomId === self._editing) { self._cache[i] = res.data; break; }
+              }
+            } else {
+              self._cache.push(res.data);
+            }
+            self._renderStats();
+            self._applyFilter();
           })
           .catch(function(e) {
             Spinner.hide();
@@ -4734,7 +4772,10 @@
             Spinner.hide();
             if (!res.success) { Toast.error(res.message, 'Cannot Delete'); return; }
             Toast.success('Room ' + roomNumber + ' has been removed.', 'Deleted');
-            self.load();
+            GAS.invalidate('listRooms', 'getDashboardData');
+            self._cache = self._cache.filter(function(r) { return r.roomId !== roomId; });
+            self._renderStats();
+            self._applyFilter();
           })
           .catch(function(e) {
             Spinner.hide();
@@ -8434,17 +8475,19 @@
 
       load: function() {
         var self = this;
-        GAS.run('getHotelSettings').then(function(r){ if (r.success) self._hotel = r.data; }).catch(function(){});
         Spinner.show('Loading invoices…');
-        GAS.run('listInvoices', Auth.getToken(), {})
-          .then(function(res) {
-            Spinner.hide();
-            if (!res.success) { Toast.error(res.message, 'Billing'); return; }
-            self._cache = res.data || [];
-            self._renderStats();
-            self._applyFilter();
-          })
-          .catch(function(e) { Spinner.hide(); Toast.error(e.message || 'Failed to load invoices.', 'Error'); });
+        Promise.all([
+          GAS.run('getHotelSettings'),
+          GAS.run('listInvoices', Auth.getToken(), {})
+        ]).then(function(results) {
+          Spinner.hide();
+          var r0 = results[0], r1 = results[1];
+          if (r0 && r0.success) self._hotel = r0.data;
+          if (!r1.success) { Toast.error(r1.message, 'Billing'); return; }
+          self._cache = r1.data || [];
+          self._renderStats();
+          self._applyFilter();
+        }).catch(function(e) { Spinner.hide(); Toast.error(e.message || 'Failed to load invoices.', 'Error'); });
       },
 
       _renderStats: function() {
@@ -9088,6 +9131,11 @@
       App.init();
       navigate('dashboard');
       PWA.hideSplash();
+      // Debounce all text search inputs (id ends with -search)
+      document.querySelectorAll('input[id$="-search"]').forEach(function(el) {
+        var orig = el.oninput;
+        if (orig) el.oninput = _debounce(orig, 250);
+      });
     });
 
   </script>

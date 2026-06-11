@@ -8,6 +8,10 @@
 
 function getDashboardData() {
   try {
+    var t0 = new Date().getTime();
+    var cached = _cGet('dashboard');
+    if (cached) { Logger.log('[getDashboardData] cache hit'); return successResponse(cached); }
+
     var today    = formatDate(now());
     var ym       = today.substring(0, 7); // "yyyy-MM"
     var thisYear = today.substring(0, 4); // "yyyy"
@@ -206,7 +210,7 @@ function getDashboardData() {
       .filter(function(r) { return r[7] ? formatDate(r[7]) === today : false; })
       .reduce(function(s, r) { return s + toNumber(r[14], 0); }, 0));
 
-    return successResponse({
+    var result = {
       rooms          : rooms,
       recentBookings : recentBookings,
       snapshot: {
@@ -270,7 +274,10 @@ function getDashboardData() {
         unpaidBalance: billingUnpaid,
         todayBilling : billingToday,
       },
-    });
+    };
+    _cSet('dashboard', result, 60);
+    Logger.log('[getDashboardData] ' + (new Date().getTime() - t0) + 'ms');
+    return successResponse(result);
   } catch(e) {
     return handleError(e, "getDashboardData");
   }

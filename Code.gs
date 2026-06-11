@@ -993,12 +993,40 @@ function onOpen() {
 
 
 // =============================================================================
+// CACHE HELPERS — thin wrappers around CacheService (script-scoped)
+// =============================================================================
+var _CP = 'gh_'; // key prefix
+
+function _cGet(key) {
+  try {
+    var v = CacheService.getScriptCache().get(_CP + key);
+    return v !== null ? JSON.parse(v) : null;
+  } catch(e) { return null; }
+}
+
+function _cSet(key, val, ttl) {
+  try {
+    CacheService.getScriptCache().put(_CP + key, JSON.stringify(val), ttl || 120);
+  } catch(e) {}
+}
+
+function _cDel() {
+  try {
+    var keys = Array.prototype.slice.call(arguments).map(function(k) { return _CP + k; });
+    CacheService.getScriptCache().removeAll(keys);
+  } catch(e) {}
+}
+
+// =============================================================================
 // SECTION 11 — PUBLIC SETTINGS API
 // =============================================================================
 
 function getHotelSettings() {
   try {
-    return successResponse({
+    var cached = _cGet('settings');
+    if (cached) return successResponse(cached);
+    var t0 = new Date().getTime();
+    var data = {
       hotelName   : trimStr(getSetting("HOTEL_NAME")    || ""),
       address     : trimStr(getSetting("HOTEL_ADDRESS") || ""),
       phone       : trimStr(getSetting("HOTEL_PHONE")   || ""),
@@ -1014,7 +1042,10 @@ function getHotelSettings() {
       devPhone    : trimStr(getSetting("DEV_PHONE")     || "+92 339 6800123"),
       devPoweredBy: trimStr(getSetting("DEV_POWERED_BY")|| "Powered by Neurovis"),
       devCopyright: trimStr(getSetting("DEV_COPYRIGHT") || "© 2026 Neurovis. All rights reserved."),
-    });
+    };
+    _cSet('settings', data, 300);
+    Logger.log('[getHotelSettings] ' + (new Date().getTime() - t0) + 'ms');
+    return successResponse(data);
   } catch (e) {
     return handleError(e, "getHotelSettings");
   }
@@ -1040,6 +1071,7 @@ function saveHotelSettings(token, data) {
     if (data.devPoweredBy!== undefined) setSetting("DEV_POWERED_BY",   trimStr(data.devPoweredBy),        "Powered-by attribution text");
     if (data.devCopyright!== undefined) setSetting("DEV_COPYRIGHT",    trimStr(data.devCopyright),        "Copyright notice");
     _addAuditLog("Settings", "UPDATE", "HOTEL_PROFILE", "Hotel settings updated");
+    _cDel('settings');
     return successResponse(null, "Settings saved successfully.");
   } catch (e) {
     return handleError(e, "saveHotelSettings");

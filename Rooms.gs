@@ -47,6 +47,7 @@ function addRoom(data) {
     ];
 
     appendRow(SHEETS.ROOMS, row);
+    _cDel('rooms', 'dashboard');
     return successResponse(_roomRowToObj(row), "Room " + roomNumber + " added successfully.");
   } catch (e) {
     return handleError(e, "addRoom");
@@ -92,6 +93,7 @@ function updateRoom(roomId, data) {
     ];
 
     sheet.getRange(rowIdx, 1, 1, row.length).setValues([row]);
+    _cDel('rooms', 'dashboard');
     return successResponse(_roomRowToObj(row), "Room " + roomNumber + " updated successfully.");
   } catch (e) {
     return handleError(e, "updateRoom");
@@ -113,6 +115,7 @@ function deleteRoom(roomId) {
     }
 
     getSheet(SHEETS.ROOMS).deleteRow(rowIdx);
+    _cDel('rooms', 'dashboard');
     return successResponse({ roomId: roomId }, "Room deleted successfully.");
   } catch (e) {
     return handleError(e, "deleteRoom");
@@ -137,6 +140,12 @@ function getRoomById(roomId) {
  */
 function listRooms(filters) {
   try {
+    var noFilters = !filters || (!filters.status && !filters.roomType && !filters.search);
+    if (noFilters) {
+      var cached = _cGet('rooms');
+      if (cached) return successResponse(cached);
+    }
+    var t0 = new Date().getTime();
     var rows  = getSheetData(SHEETS.ROOMS);
     var rooms = rows
       .filter(function (r) { return trimStr(r[0]) !== ""; })
@@ -159,6 +168,10 @@ function listRooms(filters) {
       }
     }
 
+    if (noFilters) {
+      _cSet('rooms', rooms, 120);
+      Logger.log('[listRooms] ' + (new Date().getTime() - t0) + 'ms');
+    }
     return successResponse(rooms);
   } catch (e) {
     return handleError(e, "listRooms");
